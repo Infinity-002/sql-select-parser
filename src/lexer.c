@@ -53,6 +53,9 @@ static TokenType keyword_type(const char *lexeme) {
     if (strcmp(lexeme, "OR") == 0) {
         return TOKEN_OR;
     }
+    if (strcmp(lexeme, "IN") == 0) {
+        return TOKEN_IN;
+    }
     return TOKEN_IDENTIFIER;
 }
 
@@ -298,6 +301,7 @@ const char *token_type_name(TokenType type) {
         case TOKEN_WHERE: return "WHERE";
         case TOKEN_AND: return "AND";
         case TOKEN_OR: return "OR";
+        case TOKEN_IN: return "IN";
         case TOKEN_IDENTIFIER: return "IDENTIFIER";
         case TOKEN_NUMBER: return "NUMBER";
         case TOKEN_STRING: return "STRING";

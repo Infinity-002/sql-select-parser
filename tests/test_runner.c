@@ -97,6 +97,26 @@ int main(void) {
             1
         },
         {
+            "valid_scalar_subquery_comparison",
+            "SELECT name FROM student WHERE age > (SELECT minimum_age FROM thresholds WHERE level = 'senior');",
+            1
+        },
+        {
+            "valid_left_hand_scalar_subquery",
+            "SELECT name FROM student WHERE (SELECT cutoff FROM thresholds WHERE level = 'junior') <= age;",
+            1
+        },
+        {
+            "valid_in_subquery",
+            "SELECT name FROM student WHERE age IN (SELECT eligible_age FROM thresholds WHERE level = 'senior');",
+            1
+        },
+        {
+            "valid_from_subquery",
+            "SELECT name FROM (SELECT name FROM student WHERE age > 18) senior_students;",
+            1
+        },
+        {
             "invalid_missing_select_list",
             "SELECT FROM student WHERE age > 18;",
             0
@@ -134,6 +154,16 @@ int main(void) {
         {
             "invalid_unbalanced_parenthesis",
             "SELECT name FROM student WHERE (age > 18 AND city = 'Delhi';",
+            0
+        },
+        {
+            "invalid_incomplete_scalar_subquery",
+            "SELECT name FROM student WHERE age > (SELECT minimum_age FROM thresholds WHERE);",
+            0
+        },
+        {
+            "invalid_from_subquery_missing_alias",
+            "SELECT name FROM (SELECT name FROM student WHERE age > 18);",
             0
         }
     };

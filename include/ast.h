@@ -3,16 +3,26 @@
 
 #include <stddef.h>
 
+typedef struct SelectStatement SelectStatement;
+
 typedef enum {
     VALUE_IDENTIFIER,
     VALUE_NUMBER,
-    VALUE_STRING
+    VALUE_STRING,
+    VALUE_SUBQUERY
 } ValueType;
 
 typedef struct ValueNode {
     ValueType type;
     char *text;
+    SelectStatement *subquery;
 } ValueNode;
+
+typedef struct FromSource {
+    char *table_name;
+    SelectStatement *subquery;
+    char *alias;
+} FromSource;
 
 typedef struct ColumnList {
     char **items;
@@ -26,7 +36,8 @@ typedef enum {
     COMP_LT,
     COMP_GT,
     COMP_LTE,
-    COMP_GTE
+    COMP_GTE,
+    COMP_IN
 } ComparisonOperator;
 
 typedef enum {
@@ -52,11 +63,11 @@ struct ExpressionNode {
     } data;
 };
 
-typedef struct SelectStatement {
+struct SelectStatement {
     ColumnList columns;
-    char *table_name;
+    FromSource from_source;
     ExpressionNode *where_clause;
-} SelectStatement;
+};
 
 void free_select_statement(SelectStatement *statement);
 

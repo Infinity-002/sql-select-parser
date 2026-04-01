@@ -5,7 +5,7 @@ This project implements a small compiler-style front end for a subset of SQL `SE
 ## Supported grammar
 
 ```text
-query          -> SELECT select_list FROM identifier where_clause? ;
+query          -> SELECT select_list FROM from_source where_clause? ;
 select_list    -> * | identifier ( , identifier )*
 where_clause   -> WHERE expression
 expression     -> or_expr
@@ -13,8 +13,10 @@ or_expr        -> and_expr ( OR and_expr )*
 and_expr       -> primary ( AND primary )*
 primary        -> comparison | ( expression )
 comparison     -> value comp_op value
-value          -> identifier | number | string
-comp_op        -> = | != | < | > | <= | >=
+value          -> identifier | number | string | ( query_no_semicolon )
+query_no_semicolon -> SELECT select_list FROM from_source where_clause?
+from_source    -> identifier | ( query_no_semicolon ) identifier
+comp_op        -> = | != | < | > | <= | >= | IN
 ```
 
 ## Project layout
@@ -69,4 +71,7 @@ make test
 
 - The lexer is case-insensitive for SQL keywords.
 - The parser uses recursive descent and prints a fuller grammar-style parse tree representation.
+- Scalar subqueries are supported as comparison values inside `WHERE`, including either side of the operator.
+- `IN (SELECT ...)` is supported in `WHERE`.
+- Subqueries are supported in `FROM` as `(SELECT ...) alias`.
 - Errors are reported with token positions to make debugging easier.

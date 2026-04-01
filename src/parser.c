@@ -82,8 +82,46 @@ static int append_column(ColumnList *columns, const char *name, ParserState *sta
     return 1;
 }
 
+static int parse_select_statement_internal(ParserState *state, SelectStatement *statement, int expect_semicolon);
+
+static int is_subquery_start(const ParserState *state) {
+    return peek(state)->type == TOKEN_LPAREN &&
+        state->current + 1U < state->stream->count &&
+        state->stream->tokens[state->current + 1U].type == TOKEN_SELECT;
+}
+
 static int parse_value(ParserState *state, ValueNode *value) {
     const Token *token = peek(state);
+    SelectStatement *subquery;
+
+    memset(value, 0, sizeof(*value));
+
+    if (is_subquery_start(state)) {
+        if (!consume(state, TOKEN_LPAREN, "Expected '(' before subquery")) {
+            return 0;
+        }
+
+        subquery = (SelectStatement *)calloc(1U, sizeof(SelectStatement));
+        if (subquery == NULL) {
+            snprintf(state->error_buffer, state->error_buffer_size, "Memory allocation failed while building subquery.");
+            return 0;
+        }
+
+        if (!parse_select_statement_internal(state, subquery, 0)) {
+            free(subquery);
+            return 0;
+        }
+
+        if (!consume(state, TOKEN_RPAREN, "Expected ')' after subquery")) {
+            free_select_statement(subquery);
+            free(subquery);
+            return 0;
+        }
+
+        value->type = VALUE_SUBQUERY;
+        value->subquery = subquery;
+        return 1;
+    }
 
     if (match(state, TOKEN_IDENTIFIER)) {
         value->type = VALUE_IDENTIFIER;
@@ -95,7 +133,7 @@ static int parse_value(ParserState *state, ValueNode *value) {
         value->type = VALUE_STRING;
         value->text = copy_text(previous(state)->lexeme);
     } else {
-        parser_error(state, "Expected identifier, number, or string literal", token);
+        parser_error(state, "Expected identifier, number, string literal, or subquery", token);
         return 0;
     }
 
@@ -132,6 +170,10 @@ static int parse_comparison_operator(ParserState *state, ComparisonOperator *ope
         *operator_type = COMP_GTE;
         return 1;
     }
+    if (match(state, TOKEN_IN)) {
+        *operator_type = COMP_IN;
+        return 1;
+    }
 
     parser_error(state, "Expected comparison operator", peek(state));
     return 0;
@@ -150,6 +192,21 @@ static ExpressionNode *allocate_expression(ParserState *state, ExpressionType ty
     return node;
 }
 
+static void free_value_node(ValueNode *value) {
+    if (value == NULL) {
+        return;
+    }
+
+    free(value->text);
+    value->text = NULL;
+
+    if (value->subquery != NULL) {
+        free_select_statement(value->subquery);
+        free(value->subquery);
+        value->subquery = NULL;
+    }
+}
+
 static void free_expression_node(ExpressionNode *node) {
     if (node == NULL) {
         return;
@@ -159,8 +216,8 @@ static void free_expression_node(ExpressionNode *node) {
         free_expression_node(node->data.logical.left);
         free_expression_node(node->data.logical.right);
     } else {
-        free(node->data.comparison.left.text);
-        free(node->data.comparison.right.text);
+        free_value_node(&node->data.comparison.left);
+        free_value_node(&node->data.comparison.right);
     }
 
     free(node);
@@ -169,7 +226,7 @@ static void free_expression_node(ExpressionNode *node) {
 static ExpressionNode *parse_primary(ParserState *state) {
     ExpressionNode *node;
 
-    if (match(state, TOKEN_LPAREN)) {
+    if (!is_subquery_start(state) && match(state, TOKEN_LPAREN)) {
         ExpressionNode *inner = parse_expression(state);
         if (inner == NULL) {
             return NULL;
@@ -286,6 +343,100 @@ static int parse_select_list(ParserState *state, ColumnList *columns) {
     return 1;
 }
 
+static int parse_from_source(ParserState *state, FromSource *from_source) {
+    SelectStatement *subquery;
+
+    if (is_subquery_start(state)) {
+        if (!consume(state, TOKEN_LPAREN, "Expected '(' before subquery in FROM clause")) {
+            return 0;
+        }
+
+        subquery = (SelectStatement *)calloc(1U, sizeof(SelectStatement));
+        if (subquery == NULL) {
+            snprintf(state->error_buffer, state->error_buffer_size, "Memory allocation failed while building FROM subquery.");
+            return 0;
+        }
+
+        if (!parse_select_statement_internal(state, subquery, 0)) {
+            free(subquery);
+            return 0;
+        }
+
+        if (!consume(state, TOKEN_RPAREN, "Expected ')' after subquery in FROM clause")) {
+            free_select_statement(subquery);
+            free(subquery);
+            return 0;
+        }
+
+        if (!consume(state, TOKEN_IDENTIFIER, "Expected alias after subquery in FROM clause")) {
+            free_select_statement(subquery);
+            free(subquery);
+            return 0;
+        }
+
+        from_source->subquery = subquery;
+        from_source->alias = copy_text(previous(state)->lexeme);
+        if (from_source->alias == NULL) {
+            snprintf(state->error_buffer, state->error_buffer_size, "Memory allocation failed while copying FROM alias.");
+            return 0;
+        }
+
+        return 1;
+    }
+
+    if (!consume(state, TOKEN_IDENTIFIER, "Expected table name after 'FROM'")) {
+        return 0;
+    }
+
+    from_source->table_name = copy_text(previous(state)->lexeme);
+    if (from_source->table_name == NULL) {
+        snprintf(state->error_buffer, state->error_buffer_size, "Memory allocation failed while copying table name.");
+        return 0;
+    }
+
+    return 1;
+}
+
+static int parse_select_statement_internal(ParserState *state, SelectStatement *statement, int expect_semicolon) {
+    memset(statement, 0, sizeof(*statement));
+
+    if (!consume(state, TOKEN_SELECT, "Expected 'SELECT' at start of query")) {
+        return 0;
+    }
+
+    if (!parse_select_list(state, &statement->columns)) {
+        free_select_statement(statement);
+        return 0;
+    }
+
+    if (!consume(state, TOKEN_FROM, "Expected 'FROM' after select list")) {
+        free_select_statement(statement);
+        return 0;
+    }
+
+    if (!parse_from_source(state, &statement->from_source)) {
+        free_select_statement(statement);
+        return 0;
+    }
+
+    if (match(state, TOKEN_WHERE)) {
+        statement->where_clause = parse_expression(state);
+        if (statement->where_clause == NULL) {
+            free_select_statement(statement);
+            return 0;
+        }
+    }
+
+    if (expect_semicolon) {
+        if (!consume(state, TOKEN_SEMICOLON, "Expected ';' at end of query")) {
+            free_select_statement(statement);
+            return 0;
+        }
+    }
+
+    return 1;
+}
+
 int parse_select_statement(
     const TokenStream *stream,
     SelectStatement *statement,
@@ -300,42 +451,7 @@ int parse_select_statement(
     state.error_buffer = error_buffer;
     state.error_buffer_size = error_buffer_size;
 
-    if (!consume(&state, TOKEN_SELECT, "Expected 'SELECT' at start of query")) {
-        return 0;
-    }
-
-    if (!parse_select_list(&state, &statement->columns)) {
-        free_select_statement(statement);
-        return 0;
-    }
-
-    if (!consume(&state, TOKEN_FROM, "Expected 'FROM' after select list")) {
-        free_select_statement(statement);
-        return 0;
-    }
-
-    if (!consume(&state, TOKEN_IDENTIFIER, "Expected table name after 'FROM'")) {
-        free_select_statement(statement);
-        return 0;
-    }
-
-    statement->table_name = copy_text(previous(&state)->lexeme);
-    if (statement->table_name == NULL) {
-        snprintf(error_buffer, error_buffer_size, "Memory allocation failed while copying table name.");
-        free_select_statement(statement);
-        return 0;
-    }
-
-    if (match(&state, TOKEN_WHERE)) {
-        statement->where_clause = parse_expression(&state);
-        if (statement->where_clause == NULL) {
-            free_select_statement(statement);
-            return 0;
-        }
-    }
-
-    if (!consume(&state, TOKEN_SEMICOLON, "Expected ';' at end of query")) {
-        free_select_statement(statement);
+    if (!parse_select_statement_internal(&state, statement, 1)) {
         return 0;
     }
 

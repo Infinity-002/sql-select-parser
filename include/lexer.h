@@ -9,6 +9,7 @@ typedef enum {
     TOKEN_WHERE,
     TOKEN_AND,
     TOKEN_OR,
+    TOKEN_IN,
     TOKEN_IDENTIFIER,
     TOKEN_NUMBER,
     TOKEN_STRING,
